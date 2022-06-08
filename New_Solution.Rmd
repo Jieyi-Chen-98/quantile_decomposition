@@ -1,0 +1,482 @@
+---
+title: "New_Solution"
+author: "Jieyi Chen"
+date: "5/28/2022"
+output: pdf_document
+---
+
+\tableofcontents
+
+# Basic Setup {-}
+
+```{r message=FALSE}
+rm(list = ls())
+library(stats)
+library(tidyverse)
+library(haven) # import dta file
+library(fastDummies) # dummify certain columns
+library(kableExtra)
+options(scipen = 999) # no scienctific counting method
+setwd("/Users/chenjieyi/Course/22 Spring/modeling/Final")
+```
+
+# Data Manipulation
+
+I use the data from Firpo et al. (2018) https://sites.google.com/view/nicole-m-fortin/data-and-programs. I choose this dataset to ensure that important factors of wage inequality is covered as the paper and to show the implementation of the known solution. There are 2 evidence that can prove my orginality of codework.  
+1. The authors compare the wage gap of male in 1990s and in 2010s. However, I compare the wage gap of male in 2010s for white and nonwhite.  
+2. The authors write the codes in Stata. But I write the whole stuff in R and write implicit codes rather than use known package.  
+
+First, I follow what the authors do in Stata to clean the dataset.
+
+```{r}
+data <- read_dta("morgm_all8816.dta") %>% 
+  # keep 2014-2016 data
+  filter(between(year, 114, 116)) %>% 
+  # keep non-missing wage and working hours
+  filter(!is.na(lwage1) & !is.na(uhrswk)) %>% 
+  # generate white var
+  mutate(white = 1 - nonwhite) %>% 
+  # generate marital status var
+  mutate(nmarr = 1 - marr) %>% 
+  # generate public sector var
+  mutate(pub = ifelse(between(class, 1, 3), 1, 0)) %>% 
+  # generate education level vars
+  mutate(ed = case_when(educ < 9 ~ 0,
+                        between(educ, 9, 11) ~ 1,
+                        educ == 12 ~ 2,
+                        between(educ, 13, 15) ~ 3,
+                        educ == 16 ~ 4,
+                        educ > 16 ~ 5)) %>% 
+  # generate experience level vars
+  mutate(ex =  case_when(exper < 5 ~ 1,
+                         between(exper, 5, 9) ~ 2,
+                         between(exper, 10, 14) ~ 3,
+                         between(exper, 15, 19) ~ 4,
+                         between(exper, 20, 24) ~ 5,
+                         between(exper, 25, 29) ~ 6,
+                         between(exper, 30, 34) ~ 7,
+                         between(exper, 35, 39) ~ 8,
+                         exper >= 40 ~ 9)) %>% 
+  # generate occupation vars
+  mutate(occd = case_when((between(occ3, 10, 199) | occ3 == 430) ~ 11,
+                          (between(occ3, 200, 999) & occ3 != 430) ~ 12,
+                          between(occ3, 1000, 1560) ~ 21,
+                          between(occ3, 1600, 1999) ~ 22,
+                          (between(occ3, 2000, 2099) | 
+                             between(occ3, 2140, 2999)) ~ 23,
+                          (between(occ3, 2100, 2110) | 
+                             occ3 == 3010 | occ3 == 3060) ~ 24,
+                          (occ3 == 3000 | between(occ3, 3030, 3050) | 
+                             between(occ3, 3110, 3540)) ~ 25, 
+                          between(occ3, 5000, 5930) ~ 30,
+                          (between(occ3, 4700, 4960) & occ3 != 
+                             4810 & occ3 != 4820 & occ3 != 4920) ~ 40,
+                          occ3 %in% c(4810, 4920) ~ 41,
+                          occ3 == 4820 ~ 42,
+                          between(occ3, 3600, 4699) ~ 50,
+                          between(occ3, 6000, 6130) ~ 60,
+                          between(occ3, 6200, 7630) ~ 70,
+                          between(occ3, 7700, 8965)~ 80,
+                          (between(occ3, 9000, 9750) & occ3 != 9130)~ 90,
+                          occ3 == 9130 ~ 91)) %>% 
+  # generate industry vars
+  mutate(indd = case_when(between(ind3, 170, 490) ~ 1,
+                          ind3 == 770 ~ 2,
+                          (between(ind3, 3360, 3690) | 
+                             between(ind3, 2170, 2390) | 
+                             ind3 == 3960 | ind3 == 3180) ~ 3,
+                          ((between(ind3, 2470, 3170) | 
+                              between(ind3, 3190, 3290) | 
+                              between(ind3, 3770, 3990) | 
+                              between(ind3, 1070, 2090)) & ind3 != 3960) ~ 4,
+                          between(ind3, 4070, 4590) ~ 5,
+                          between(ind3, 4670, 5790) ~ 6,
+                          (between(ind3, 6070, 6390) | 
+                             between(ind3, 570, 690)) ~ 7,
+                          (between(ind3, 6470, 6480) | 
+                             between(ind3, 6570, 6670) | 
+                             between(ind3, 6770, 6780)) ~ 8,
+                          between(ind3, 6870, 7190) ~ 9,
+                          (between(ind3, 7290, 7460) | ind3 == 6490 | 
+                             between(ind3, 6675, 6695)) ~ 10,
+                          (between(ind3, 7270, 7280) | 
+                             between(ind3, 7470, 7790)) ~ 11,
+                          between(ind3, 7860, 8470) ~ 12,
+                          between(ind3, 8560, 9290) ~ 13,
+                          between(ind3, 9370, 9590) ~ 14)) %>% 
+  # generate base group
+  mutate(base = ifelse(covered==0 & marr==1 & ed==2 & 
+                         ex==5 & occd==70 & indd==2, 1, 0)) %>% 
+  select(-nonwhite) %>% 
+  select(white, everything())
+
+# drop NA values
+data <- data %>% 
+  filter(!is.na(occd)) %>% 
+  filter(!is.na(indd))
+
+# dummify selected columns
+dummy <- c("ed","ex","occd","indd")
+data <- dummy_cols(data, select_columns = dummy)
+```
+
+## New Solution Part 1
+
+Create weighting groups and drop non-overlapping obs. The number of observations change from 235,336 to 206,549. 
+
+```{r}
+data <- data %>% 
+  # create weighting group id
+  group_by(covered, nmarr, ed, ex, occd, indd) %>% 
+  mutate(group = cur_group_id()) %>% 
+  # drop obs without weighting group
+  filter(!is.na(group))
+
+# find the weighting unique group in white=0
+group_0 <- data %>% 
+  filter(white == 0) %>% 
+  pull(group) %>% 
+  unique()
+
+# find the unique weighting group in white=1
+group_1 <- data %>% 
+  filter(white == 1) %>% 
+  pull(group) %>% 
+  unique()
+
+# drop weighting group that only appear in one treatment group
+group_all <- c(group_0,group_1) %>% 
+  as.data.frame()
+
+colnames(group_all)[1] <- "group"
+
+group_all <- group_all %>% 
+  count(group) %>% 
+  filter(n > 1) %>% 
+  pull(group)
+
+data <- data %>% 
+  filter(group %in% group_all)
+```
+
+Second, I store three datasets of nonwhite (t=0), white (t=1),and counterfactual (t=2)
+
+```{r}
+data_0 <- data %>% 
+  filter(white == 0)
+
+data_1 <- data %>% 
+  filter(white == 1)
+
+data_2 <- data 
+```
+
+# The First Stage
+
+## Reweighting Sample
+
+**The key point here is that CPS has its own sample weight *eweight* and I pay special attention to always inovolve it when considering weighting.**
+
+### Reweighting for t=0,1
+
+First, I reweight for nonwhite and white (considering original sample weight) 
+
+```{r warning=FALSE}
+# calculate p considering eweight
+n_white <- t(data$white) %*% data$eweight
+n_all <- as.vector(sum(data$eweight))
+p <- as.vector(n_white/n_all)
+
+# reweight for nonwhite (t=0)
+data_0 <- data_0 %>% 
+  mutate( weight = ( (1/(1-p)) * eweight / n_all ) ) %>% 
+  mutate(t = 0)
+
+sum(data_0$weight)
+# reweight for white (t=1)
+data_1 <- data_1 %>% 
+  mutate( weight = ((1/p) * eweight / n_all ) ) %>% 
+  mutate(t = 1)
+
+sum(data_1$weight)
+```
+
+### Reweighting for t=c (t=2)
+
+Second, I reweight for counterfactural group (considering original sample weight)  
+
+#### New Solution Part 2
+
+Change from logit to:  
+p(X) = dividing the number of times being in $T=1$ group by the number of observations in that group (considering sample weight)
+
+```{r}
+############## Get p(X) ##############
+pX <- c()
+for (i in 1:length(group_all)) {
+  t <- data_2[which(data_2$group == group_all[i]), ]
+  pX[i] <- sum(t$white*t$eweight) / sum(t$eweight)
+}
+
+group_p <- cbind(group_all, pX) %>% as.data.frame()
+
+data_2 <- data_2 %>% 
+  left_join(group_p, by = c("group" = "group_all"))
+
+
+############## Reweight t=2 ##############
+
+# Reweight for counterfactural group: white=0, 
+# but we want to approach their wages under white=1
+
+data_2 <- data_2 %>% 
+  filter(white==0) %>% 
+  mutate(w = (1/p) * (pX/(1-pX)) * eweight )
+
+weight_all <- sum(data_2$w)
+data_2 <- data_2 %>% 
+  mutate(weight = w/weight_all)
+
+data_2 <- data_2 %>% 
+  select(-pX, -w) %>% 
+  mutate(t = 2)
+
+sum(data_2$weight)
+```
+
+## Estimating Distributional Statistics
+
+### Empirical cdf from scratch 
+
+Here, the logic to recover the cdf is to sort the observation by lwage1 and then sequentially add their weights. And I believe it works in this case thanks to our big sample size.  
+
+```{r}
+############## CDF for t=0 ##############
+
+cdf <- c()
+cdf_0 <- c(rep(0, nrow(data_0)+1))
+data_0 <- data_0 %>% 
+  arrange(lwage1)
+for (i in 2:(nrow(data_0)+1)) {
+  cdf_0[i] <- data_0$weight[i-1] + cdf_0[i-1]
+}
+cdf <- cdf_0[-1] %>% as.data.frame()
+colnames(cdf) <- "cdf"
+data_0 <- cbind(data_0, cdf)
+
+############## CDF for t=1 ##############
+
+cdf_1 <- c(rep(0, nrow(data_1)+1))
+data_1 <- data_1 %>% 
+  arrange(lwage1)
+for (i in 2:(nrow(data_1)+1)) {
+  cdf_1[i] <- data_1$weight[i-1] + cdf_1[i-1]
+}
+cdf <- cdf_1[-1] %>% as.data.frame()
+colnames(cdf) <- "cdf"
+data_1 <- cbind(data_1, cdf)
+
+############## CDF for t=2 ##############
+cdf_2 <- c(rep(0, nrow(data_2)+1))
+data_2 <- data_2 %>% 
+  arrange(lwage1)
+for (i in 2:(nrow(data_2)+1)) {
+  cdf_2[i] <- data_2$weight[i-1] + cdf_2[i-1]
+}
+cdf <- cdf_2[-1] %>% as.data.frame()
+colnames(cdf) <- "cdf"
+data_2 <- cbind(data_2, cdf)
+```
+
+### Wage for a quantile
+
+Write a function to find the wage for a certain quantile after weighting using cdf. My way of finding the wage is to find the cdf that is closest to the quantile we set in absolute value.  
+
+```{r}
+find_quantile <- function(tau, df){
+  # find the number of row which gives the cdf closest to tau
+  cdf <- df$cdf
+  n_tau <- which.min(abs(tau-cdf))
+  # get lwage1 of that row
+  q_tau <- df$lwage1[n_tau]
+  return(q_tau)
+}
+```
+
+### Gassian kernel density 
+
+Get empirical density ($f_y(q_\tau)$) from scratch using Gaussian kernel method. 
+
+$$
+K(x) = \frac{1}{\sqrt{2\pi}} \times e^{-\frac{1}{2}\big(\frac{X_i-x}{h}\big)^2} \\
+\tilde{f}(x) = \frac{1}{nh} \times \sum_{i=1}^N K\big(\frac{X_i-x}{h}\big) = \frac{1}{h\sqrt{2\pi}} \times \frac{1}{n} \sum_{i=1}^N  e^{-\frac{1}{2}\big(\frac{X_i-x}{h}\big)^2}
+$$
+
+We have to take weight into account, so the below codes integrate some weight issues.
+
+```{r}
+# I choose h = 0.068 as the best bandwidth from runninig the density function 
+# d <- density(data_0$lwage1, weights = data_0$weight)
+# plot(d, lwd = 2, main = "Default kernel density plot")
+
+find_density <- function(tau, df, h=0.068){
+  # (1) find x = q_tau
+  q_tau <- find_quantile(tau, df)
+  # (2) calculate the first term (weight)
+  first_term <- 1 / (h*sqrt(2*pi)) 
+  # (3) calculate the second term (weight)
+  second_term <- c()
+  for (i in 1:nrow(df)) {
+    second_term[i] <- exp(-0.5*(((df$lwage1[i] - q_tau)/h)^2)) * df$weight[i]
+  }
+  second_term_sum <- sum(second_term)
+  return(first_term*second_term_sum)
+}
+
+# modified from: https://medium.com/analytics-vidhya/kernel-density-estimation-kernel-construction-and-bandwidth-optimization-using-maximum-b1dfce127073
+```
+
+
+# The Second Stage: RIF Regression
+
+$$
+\text{RIF}(y;q_\tau,F) = q_\tau +\frac{\tau-1\{y \leq q_\tau\}}{f_y(q_\tau)}
+$$
+
+## RIF for each quantile
+
+Write a function to get the RIF value for each $\tau$
+
+```{r}
+# create a function whether: if t==TRUE, then 1; if t==FALSE, then 0
+whether <- function(t) ifelse(t, 1, 0)
+
+find_RIF <- function(tau, df) {
+  RIF <- c()
+  q_tau <- find_quantile(tau, df)
+  fq_tau <- find_density(tau, df)
+  for (i in 1:nrow(df)) {
+  IF <- (tau - whether(df$lwage1[i] <= q_tau)) / fq_tau
+  RIF[i] <- q_tau + IF
+  }
+  return(RIF)
+}
+```
+
+## RIF Regression for each quantile
+
+Write a function to get reweighted RIF Regression result
+
+```{r}
+regress_RIF <- function(tau, df) {
+  # input
+  df <- df %>% 
+    select(-c("ed_0", "ex_1", "occd_11", "indd_1"))
+  
+  X <- df[, c(22:23, 30:71)]  # collenearity concern
+  X <- as.matrix(X) 
+  intercept <- rep(1, nrow(X))
+  X <- cbind(intercept, X)
+
+  Y <- find_RIF(tau, df)
+  Y <- as.matrix(Y)
+  weight <- as.vector(df$weight)
+  
+  # closed-form solutions for coefficients
+  coef <- solve(t(X*weight) %*% X) %*% t(X*weight) %*% Y
+  
+  # drop the coefficient for intercept
+  coef <- coef[-1]
+
+  return(coef)
+}
+```
+
+# Decompose the wage difference
+
+```{r}
+# find the expected values
+E_x_1 <- c()
+E_x_0 <- c()
+ind.x <- c(22:23, 30:71)
+for (i in 1:44) {
+  E_x_1[i] <- sum(data_1[, ind.x[i]] * data_1$weight)
+  E_x_0[i] <- sum(data_0[, ind.x[i]] * data_0$weight)
+}
+
+# get the names for covariates
+cov_name <- names(data_0)[c(22:23, 30:71)]
+
+############## tau = 10 ##############
+g_0_10 <- regress_RIF(tau = 0.1, df = data_0)
+g_1_10 <- regress_RIF(tau = 0.1, df = data_1)
+g_2_10 <- regress_RIF(tau = 0.1, df = data_2)
+s_10 <- t(E_x_1) %*% (g_1_10 - g_2_10)
+x_10 <- t(E_x_1 - E_x_0) %*% g_0_10 + t(E_x_1) %*% (g_2_10 - g_0_10)
+
+cat("wage structure effect for 10th quantile is", s_10)
+cat("composite effect for 10th quantile is", x_10)
+cat("report approx error,", t(E_x_1) %*% (g_2_10 - g_0_10))
+
+s_10_d <- E_x_1 * (g_1_10 - g_2_10)
+x_10_d <- (E_x_1 - E_x_0) * g_0_10
+
+############## tau = 50 ##############
+
+g_0_50 <- regress_RIF(tau = 0.5, df = data_0)
+g_1_50 <- regress_RIF(tau = 0.5, df = data_1)
+g_2_50 <- regress_RIF(tau = 0.5, df = data_2)
+s_50 <- t(E_x_1) %*% (g_1_50 - g_2_50)
+x_50 <- t(E_x_1 - E_x_0) %*% g_0_50 + t(E_x_1) %*% (g_2_50 - g_0_50)
+
+cat("wage structure effect for 50th quantile is", s_50)
+cat("composite effect for 50th quantile is", x_50)
+cat("report approx error,", t(E_x_1) %*% (g_2_50 - g_0_50))
+
+s_50_d <- E_x_1 * (g_1_50 - g_2_50)
+x_50_d <- (E_x_1 - E_x_0) * g_0_50
+
+############## tau = 90 ##############
+g_0_90 <- regress_RIF(tau = 0.9, df = data_0)
+g_1_90 <- regress_RIF(tau = 0.9, df = data_1)
+g_2_90 <- regress_RIF(tau = 0.9, df = data_2)
+s_90 <- t(E_x_1) %*% (g_1_90 - g_2_90)
+x_90 <- t(E_x_1 - E_x_0) %*% g_0_90 + t(E_x_1) %*% (g_2_90 - g_0_90)
+
+cat("wage structure effect for 90th quantile is", s_90)
+cat("composite effect for 90th quantile is", x_90)
+cat("report approx error,", t(E_x_1) %*% (g_2_90 - g_0_90))
+
+s_90_d <- E_x_1 * (g_1_90 - g_2_90)
+x_90_d <- (E_x_1 - E_x_0) * g_0_90
+
+d_all <- cbind(s_10_d, s_50_d, s_90_d, x_10_d, x_50_d, x_90_d)
+
+rownames(d_all) <- cov_name
+
+dd <- kbl(d_all, longtable = T, booktabs = T, format = "latex", digits = 4,
+    col.names = c("10_th", "50_th", "90_th", "10_th", "50_th", "90_th"),
+    caption = "Detailed Wage Decomposition after IPW Weighting and RIF (New)") %>%
+add_header_above(c(" ", "Wage Structual Effect" = 3, "Composite Effect" = 3)) %>%
+kable_styling(latex_options = c("repeat_header"))
+
+write.table(dd[[1]],"newdf.txt",sep="\t",row.names=FALSE)
+
+all <- cbind(s_10, s_50, s_90, x_10, x_50, x_90)
+
+aa <- kbl(all, longtable = T, booktabs = T, format = "latex", digits = 4,
+    col.names = c("10_th", "50_th", "90_th", "10_th", "50_th", "90_th"),
+    caption = "Aggregate Wage Decomposition after IPW Weighting and RIF (New)") %>%
+add_header_above(c("Wage Structual Effect" = 3, "Composite Effect" = 3)) %>%
+kable_styling(latex_options = c("repeat_header"))
+
+write.table(aa[[1]],"newdf.txt",sep="\t",row.names=FALSE)
+
+
+```
+
+
+
+
+
+
